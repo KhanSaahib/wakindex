@@ -11,6 +11,9 @@ All notable user-visible changes to wakindex are recorded here. The format follo
 - Preserve additive access-evidence fields during decode, SQLite storage, and export, including
   nested records. Upgrade existing stores without dropping their evidence.
 
+- Add a reproducible containment-reporting fixture that fails for a known survivor or denied
+  inspection. It tests reporting only and does not certify a production isolation boundary.
+
 - Compare access-evidence freshness using timezone-aware instants, expire at the validity boundary,
   and keep stale evidence stale across clock regressions. Reject invalid freshness timestamps.
 

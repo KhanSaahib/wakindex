@@ -306,6 +306,12 @@ Known secret patterns are rejected in extension data before persistence; this is
 guard, not a substitute for minimizing what collectors read. Authority-bearing policy and IPC
 schemas remain strict.
 
+`python scripts/containment_probe.py --fixture survivor` runs a bounded Linux reporting fixture.
+The contained case returns 0; known-survivor and inspection-error cases return 6 with aggregate
+`containment-unverified`. Process identity includes boot ID and start ticks to distinguish PID
+reuse. The fixture always cleans up its own children and never signals unrelated host processes.
+It does not certify cgroup boundaries, real kernel D-state termination, or production kill latency.
+
 Runtime access-graph freshness uses RFC3339 timestamps with known timezone offsets. Expiration
 compares instants, including equality with `valid_until`, rather than timestamp strings. Once
 marked stale, a record stays stale until a new observation replaces it; clock regression cannot
