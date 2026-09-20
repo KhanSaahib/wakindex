@@ -10,6 +10,8 @@ All notable user-visible changes to wakindex are recorded here. The format follo
 
 ### Added
 
+- Collectors for network posture with an observed/inferred reachability split, configured tool
+  and MCP transports, and credential references recorded by name only.
 - Bounded access collectors for principal and capability authority, process lineage with
   inherited descriptors, and the mount table with propagation mode.
 - Access graph records, snapshot normalization, and diff semantics that keep a collector
