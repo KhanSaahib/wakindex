@@ -298,6 +298,11 @@ Ignore rules are a reviewer decision and part of the trusted configuration bound
 
 ## Extension contract
 
+Failed tool configuration scans conservatively cover all tool, execution, network, read, and write
+scopes emitted by the collector. Missing capabilities in those scopes remain indeterminate in a
+diff. Other configuration files still collect successfully. Until per-source coverage is stored,
+this may retain uncertainty for unrelated missing capabilities; it must not imply revoked access.
+
 Runtime access-graph freshness uses RFC3339 timestamps with known timezone offsets. Expiration
 compares instants, including equality with `valid_until`, rather than timestamp strings. Once
 marked stale, a record stays stale until a new observation replaces it; clock regression cannot
