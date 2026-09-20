@@ -23,6 +23,8 @@ All notable user-visible changes to wakindex are recorded here. The format follo
   and MCP transports, and credential references recorded by name only.
 - Bounded access collectors for principal and capability authority, process lineage with
   inherited descriptors, and the mount table with propagation mode.
+- Capability policy validation, immutable content-addressed revisions, and deterministic
+  default-deny evaluation with canonical path matching and budget limits.
 - Access graph records, snapshot normalization, and diff semantics that keep a collector
   failure distinct from revoked access.
 - SQLite snapshot store with versioned migrations, transactional writes, and refusal to read a
