@@ -221,6 +221,31 @@ propagation mode. Propagation matters because a shared mount can carry a mount c
 host into the perimeter after launch, so a boundary complete at launch may not stay that way. An
 unreadable mount table is an unknown over the whole filesystem scope, never an empty mount list.
 
+`NetworkCollector` records sockets and routes, and the split between them is the point. An
+established connection or a listening socket is `observed`. A destination reachable only because
+a route exists is `inferred` with low confidence, and its evidence says the connection was not
+attempted and says nothing about whether the far side would authorize it. The absence of a
+default route is recorded as its own finding rather than as an empty section, because an empty
+network section reads like a collector that did not run. Addresses are decoded from little-endian
+`/proc/net` words; an address that cannot be decoded exactly becomes an unknown, since a wrong
+destination in an access inventory is worse than a missing one. The collector opens no connection
+and resolves no name: probing would make the inventory generate the traffic it exists to describe.
+
+`ToolCollector` records configured tool and MCP servers by delegating to the repository's existing
+configuration scanner rather than adding a second parser for the same formats. Everything it
+produces is `declared`: a configuration file says what was asked for, not what happened. A
+discovered command is recorded as text and never run. A file that is missing, malformed or empty
+becomes an unknown, because a file that could not be parsed and an agent that reaches nothing must
+not look the same.
+
+`CredentialCollector` records credential references by name and path and never their values.
+`/proc/<pid>/environ` is split on the first `=` and the value discarded immediately; credential
+files are checked for existence and never opened. Every finding states that what the credential
+authorizes remotely is unknown, because holding a token is not evidence of its scope and an
+offline host cannot ask the issuer. The canary tests search the serialized snapshot, the evidence
+sidecar and the database file for a planted secret rather than inspecting individual fields, so a
+leak through a field added later still fails.
+
 None of these collectors installs or inspects an enforcement boundary, so every finding they
 produce carries enforcement status `unknown`.
 
