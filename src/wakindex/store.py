@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from wakindex.graph import (
     AccessFinding,
@@ -21,7 +23,7 @@ from wakindex.graph import (
 
 # The store version this build understands. A store at a higher version is refused rather than
 # read on a guess; a downgrade that silently ignored newer columns would drop evidence.
-STORE_VERSION = 1
+STORE_VERSION = 2
 
 
 class StoreError(RuntimeError):
@@ -121,6 +123,11 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX idx_snapshots_session ON snapshots(session_id, snapshot_id)",
         ),
     ),
+    Migration(
+        version=2,
+        description="preserve additive evidence in a full snapshot document",
+        statements=("ALTER TABLE snapshots ADD COLUMN document_json TEXT",),
+    ),
 )
 
 
@@ -203,6 +210,8 @@ class GraphStore:
         return int(self._connection.execute("SELECT COUNT(*) AS n FROM evidence").fetchone()["n"])
 
     def _require_ready(self) -> None:
+        if self.current_version() > STORE_VERSION:
+            raise StoreIncompatible("store is newer than this build")
         if self.current_version() < STORE_VERSION:
             raise StoreError("store is not migrated; call migrate() first")
 
@@ -214,8 +223,14 @@ class GraphStore:
         self._connection.execute("BEGIN")
         try:
             cursor = self._connection.execute(
-                "INSERT INTO snapshots (session_id, schema_version, created_at) VALUES (?, ?, ?)",
-                (snapshot.session_id, snapshot.schema_version, now),
+                "INSERT INTO snapshots (session_id, schema_version, created_at, document_json) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    snapshot.session_id,
+                    snapshot.schema_version,
+                    now,
+                    json.dumps(snapshot.as_dict(), allow_nan=False),
+                ),
             )
             snapshot_id = int(cursor.lastrowid)
 
@@ -294,7 +309,7 @@ class GraphStore:
     def get_snapshot(self, snapshot_id: int) -> Snapshot:
         self._require_ready()
         header = self._connection.execute(
-            "SELECT session_id, schema_version FROM snapshots WHERE snapshot_id = ?",
+            "SELECT session_id, schema_version, document_json FROM snapshots WHERE snapshot_id = ?",
             (snapshot_id,),
         ).fetchone()
         if header is None:
@@ -302,12 +317,24 @@ class GraphStore:
 
         findings = tuple(self._read_findings(snapshot_id))
         unknowns = tuple(self._read_unknowns(snapshot_id))
-        return Snapshot(
+        indexed = Snapshot(
             session_id=header["session_id"],
             findings=findings,
             unknowns=unknowns,
             schema_version=header["schema_version"],
         )
+        # Version-one rows have only relational evidence. New rows retain the complete JSON
+        # document too, so future additive fields cannot disappear at a relational boundary.
+        if header["document_json"] is None:
+            return indexed
+        document = Snapshot.from_dict(json.loads(header["document_json"]))
+        known = _known_record(document)
+        known = replace(
+            known, unknowns=tuple(sorted(known.unknowns, key=lambda row: row.unknown_id))
+        )
+        if known.as_dict() != indexed.as_dict():
+            raise StoreError("snapshot document disagrees with indexed evidence")
+        return document
 
     def _read_findings(self, snapshot_id: int) -> Iterator[AccessFinding]:
         rows = self._connection.execute(
@@ -400,3 +427,22 @@ def open_store(path: Path | str, now: str) -> GraphStore:
         store.close()
         raise
     return store
+
+
+def _known_record(value: Any) -> Any:
+    """Compare the understood projection without discarding extensions from the real record."""
+    if isinstance(value, tuple):
+        return tuple(_known_record(item) for item in value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return replace(
+            value,
+            **{
+                item.name: (
+                    {}
+                    if item.name in {"extensions", "scope_extensions"}
+                    else _known_record(getattr(value, item.name))
+                )
+                for item in fields(value)
+            },
+        )
+    return value

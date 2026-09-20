@@ -298,6 +298,14 @@ Ignore rules are a reviewer decision and part of the trusted configuration bound
 
 ## Extension contract
 
+Evidence records preserve unknown additive fields within the supported schema major version.
+Those fields remain outside the normalized comparison but survive exports and freshness updates.
+Store schema version 2 retains a complete JSON document alongside relational indexes, verifies
+that their understood fields agree, and reads version-one rows without inventing missing data.
+Known secret patterns are rejected in extension data before persistence; this is a secondary
+guard, not a substitute for minimizing what collectors read. Authority-bearing policy and IPC
+schemas remain strict.
+
 Runtime access-graph freshness uses RFC3339 timestamps with known timezone offsets. Expiration
 compares instants, including equality with `valid_until`, rather than timestamp strings. Once
 marked stale, a record stays stale until a new observation replaces it; clock regression cannot
