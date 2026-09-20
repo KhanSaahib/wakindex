@@ -7,11 +7,17 @@ from wakindex.collectors.base import (
     CollectorContext,
     run_collectors,
 )
+from wakindex.collectors.lineage import LineageCollector
+from wakindex.collectors.mounts import MountCollector
+from wakindex.collectors.principal import PrincipalCollector
 
 __all__ = [
     "Budget",
     "Collector",
     "CollectorBudgetExceeded",
     "CollectorContext",
+    "LineageCollector",
+    "MountCollector",
+    "PrincipalCollector",
     "run_collectors",
 ]

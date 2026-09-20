@@ -10,6 +10,8 @@ All notable user-visible changes to wakindex are recorded here. The format follo
 
 ### Added
 
+- Bounded access collectors for principal and capability authority, process lineage with
+  inherited descriptors, and the mount table with propagation mode.
 - Access graph records, snapshot normalization, and diff semantics that keep a collector
   failure distinct from revoked access.
 - SQLite snapshot store with versioned migrations, transactional writes, and refusal to read a

@@ -187,6 +187,43 @@ and a store written by a newer build is refused rather than read on a guess.
 Evidence and unknown detail are checked against credential-shaped patterns on construction. A
 value that looks like a secret fails the write rather than being persisted and redacted later.
 
+## Access collectors
+
+Collectors populate the access graph from a running process tree. They read process metadata
+under `/proc` and nothing else: opening a discovered file to learn more about it would make a
+collector an execution path for whatever wrote that file, and an inherited descriptor is exactly
+what an adversary would point at something it wants read.
+
+The framework, not each collector, enforces the budget. Findings are capped, per-scope
+enumeration is capped, and a pass that runs past its deadline records a timeout instead of
+continuing. Every failure becomes an `AccessUnknown` over the scope that failed, because a scope
+nobody looked at is otherwise indistinguishable from a scope with nothing in it. Each collector
+declares the scopes it owns, so a collector that fails outright leaves those scopes marked unseen
+rather than leaving its findings uncovered.
+
+`PrincipalCollector` records real, effective, saved and filesystem uid and gid separately, plus
+supplementary groups and the effective capability mask. An unreadable capability line is an
+unknown, never an empty set: an empty set means the process holds nothing, and reporting an
+unreadable one that way understates what the process can do. When the process shares the
+operator's effective uid it records that as a finding, because the containment story does not
+apply to that profile at all.
+
+`LineageCollector` walks the tree and records descendants, working directory, root and inherited
+descriptors. A process that exits mid-walk is recorded as an unknown rather than dropped — it
+existed, and a reader judging whether the tree was contained needs to know. A tree that grows
+during the walk records a `partial_enumeration`, so an agent that forks while being read cannot
+hide a descendant for free. Descriptor targets are read as link targets only and reported as the
+kernel gives them, including a `(deleted)` marker; reconstructing a path after a rename would
+name a file that may now be something else.
+
+`MountCollector` records mount points, sources, filesystem types, read-only status and
+propagation mode. Propagation matters because a shared mount can carry a mount created on the
+host into the perimeter after launch, so a boundary complete at launch may not stay that way. An
+unreadable mount table is an unknown over the whole filesystem scope, never an empty mount list.
+
+None of these collectors installs or inspects an enforcement boundary, so every finding they
+produce carries enforcement status `unknown`.
+
 ## Permission taxonomy
 
 Current permission IDs:

@@ -395,3 +395,23 @@ def test_collectors_package_calls_no_execution_api():
                 continue
             name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
             assert name not in forbidden, f"{path.name} calls {name}"
+
+
+def test_the_same_finding_recorded_twice_is_kept_once():
+    """A duplicate id would fail the whole snapshot, costing the pass everything it did see."""
+    context = make_context()
+    for _ in range(3):
+        context.emit(
+            collector="test",
+            discriminator="same",
+            subject="session:test",
+            relation="grants",
+            object="principal:gid:65534",
+            classification="observed",
+            confidence="high",
+            evidence=evidence(),
+        )
+
+    snapshot = context.snapshot()
+    assert len(snapshot.findings) == 1
+    assert snapshot.unknowns == ()

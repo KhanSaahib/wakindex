@@ -54,6 +54,7 @@ class CollectorContext:
     def __post_init__(self) -> None:
         self._started = self.clock()
         self._findings: list[AccessFinding] = []
+        self._finding_ids: set[str] = set()
         self._unknowns: list[AccessUnknown] = []
         self._unknown_keys: set[tuple[str, str, str]] = set()
         self._unknown_seq = 0
@@ -102,6 +103,11 @@ class CollectorContext:
                 detail=f"{collector}: deadline passed before this finding was recorded",
             )
             return
+        finding_id = self.finding_id(collector, discriminator)
+        if finding_id in self._finding_ids:
+            # The same fact recorded twice is still one fact. Letting a duplicate through would
+            # fail the whole snapshot at construction, costing the pass everything it did see.
+            return
         if len(self._findings) >= self.budget.max_findings:
             self.unknown(
                 relation=relation,
@@ -112,7 +118,7 @@ class CollectorContext:
             return
         self._findings.append(
             AccessFinding(
-                finding_id=self.finding_id(collector, discriminator),
+                finding_id=finding_id,
                 session_id=self.session_id,
                 subject=subject,
                 relation=relation,
@@ -124,6 +130,7 @@ class CollectorContext:
                 enforcement=enforcement or Enforcement("unknown", "none"),
             )
         )
+        self._finding_ids.add(finding_id)
 
     def unknown(self, *, relation: str, object_prefix: str, code: str, detail: str) -> None:
         """Record a scope that could not be seen. Never call this with a secret in `detail`.
