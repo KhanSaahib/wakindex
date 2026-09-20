@@ -80,7 +80,7 @@ def test_finding_rejects_a_major_schema_mismatch():
             classification="observed",
             confidence="high",
             evidence=(Evidence("a", "b", "c", "d"),),
-            freshness=Freshness("a", "b"),
+            freshness=Freshness("2026-09-20T13:00:00Z", "2026-09-20T14:00:00Z"),
             enforcement=Enforcement("unenforced", "none"),
             schema_version="2.0",
         )
@@ -97,7 +97,7 @@ def test_finding_requires_evidence():
             classification="observed",
             confidence="high",
             evidence=(),
-            freshness=Freshness("a", "b"),
+            freshness=Freshness("2026-09-20T13:00:00Z", "2026-09-20T14:00:00Z"),
             enforcement=Enforcement("unenforced", "none"),
         )
 

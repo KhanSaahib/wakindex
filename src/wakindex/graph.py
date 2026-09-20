@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 SCHEMA_VERSION = "1.0"
@@ -157,9 +158,16 @@ class Freshness:
     valid_until: str
     stale: bool = False
 
+    def __post_init__(self) -> None:
+        if type(self.stale) is not bool:
+            raise ContractError("freshness.stale must be a boolean")
+        if _timestamp(self.valid_until) < _timestamp(self.collected_at):
+            raise ContractError("freshness.valid_until precedes collected_at")
+
     def as_of(self, now: str) -> Freshness:
         """Return this freshness marked stale if the validity window has closed at `now`."""
-        return Freshness(self.collected_at, self.valid_until, stale=now > self.valid_until)
+        expired = _timestamp(now) >= _timestamp(self.valid_until)
+        return Freshness(self.collected_at, self.valid_until, stale=self.stale or expired)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -170,7 +178,21 @@ class Freshness:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Freshness:
-        return cls(data["collected_at"], data["valid_until"], bool(data.get("stale", False)))
+        return cls(data["collected_at"], data["valid_until"], data.get("stale", False))
+
+
+def _timestamp(value: str) -> datetime:
+    """Parse a timestamp with a known offset; never echo untrusted input in errors."""
+    pattern = r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}"
+    pattern += r"(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})"
+    if not isinstance(value, str) or not re.fullmatch(pattern, value):
+        raise ContractError("freshness timestamp requires RFC3339 with a known offset")
+    if value.endswith("-00:00"):
+        raise ContractError("freshness timestamp has an unknown offset")
+    try:
+        return datetime.fromisoformat(value.upper().replace("Z", "+00:00"))
+    except ValueError:
+        raise ContractError("invalid freshness timestamp") from None
 
 
 @dataclass(frozen=True)
