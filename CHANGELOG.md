@@ -8,6 +8,9 @@ All notable user-visible changes to wakindex are recorded here. The format follo
 
 ## [Unreleased]
 
+- Compare access-evidence freshness using timezone-aware instants, expire at the validity boundary,
+  and keep stale evidence stale across clock regressions. Reject invalid freshness timestamps.
+
 ### Added
 
 - Bounded access collectors for principal and capability authority, process lineage with

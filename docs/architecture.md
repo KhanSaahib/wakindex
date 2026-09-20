@@ -273,6 +273,12 @@ Ignore rules are a reviewer decision and part of the trusted configuration bound
 
 ## Extension contract
 
+Runtime access-graph freshness uses RFC3339 timestamps with known timezone offsets. Expiration
+compares instants, including equality with `valid_until`, rather than timestamp strings. Once
+marked stale, a record stays stale until a new observation replaces it; clock regression cannot
+refresh it. Invalid timestamps, unknown offsets, reversed windows, and non-boolean stale flags
+are rejected before persistence.
+
 To support a new ecosystem:
 
 1. document the authoritative format and whether its scope is workspace, user, or system;
