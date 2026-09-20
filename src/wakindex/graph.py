@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -120,6 +120,23 @@ def reject_secrets(text: str, field: str) -> str:
     return text
 
 
+def _copy_extensions(data: dict[str, Any]) -> dict[str, Any]:
+    """Copy JSON evidence without aliases and apply the same secret-pattern guard."""
+    encoded = json.dumps(data, allow_nan=False)
+    reject_secrets(encoded, "evidence extensions")
+    return json.loads(encoded)
+
+
+def _extensions(data: dict[str, Any], known: set[str]) -> dict[str, Any]:
+    return _copy_extensions({key: value for key, value in data.items() if key not in known})
+
+
+def _export(extensions: dict[str, Any], known: dict[str, Any]) -> dict[str, Any]:
+    if extensions.keys() & known.keys():
+        raise ContractError("evidence extensions cannot override known fields")
+    return {**_copy_extensions(extensions), **known}
+
+
 @dataclass(frozen=True)
 class Evidence:
     """Why a finding was recorded. Lives in the sidecar, never in the normalized form."""
@@ -128,17 +145,21 @@ class Evidence:
     collector: str
     collected_at: str
     detail: str
+    extensions: dict[str, Any] = field(default_factory=dict, kw_only=True)
 
     def __post_init__(self) -> None:
         reject_secrets(self.detail, "evidence.detail")
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "source": self.source,
-            "collector": self.collector,
-            "collected_at": self.collected_at,
-            "detail": self.detail,
-        }
+        return _export(
+            self.extensions,
+            {
+                "source": self.source,
+                "collector": self.collector,
+                "collected_at": self.collected_at,
+                "detail": self.detail,
+            },
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Evidence:
@@ -147,6 +168,7 @@ class Evidence:
             collector=data["collector"],
             collected_at=data["collected_at"],
             detail=data["detail"],
+            extensions=_extensions(data, {"source", "collector", "collected_at", "detail"}),
         )
 
 
@@ -157,6 +179,7 @@ class Freshness:
     collected_at: str
     valid_until: str
     stale: bool = False
+    extensions: dict[str, Any] = field(default_factory=dict, kw_only=True)
 
     def __post_init__(self) -> None:
         if type(self.stale) is not bool:
@@ -167,18 +190,26 @@ class Freshness:
     def as_of(self, now: str) -> Freshness:
         """Return this freshness marked stale if the validity window has closed at `now`."""
         expired = _timestamp(now) >= _timestamp(self.valid_until)
-        return Freshness(self.collected_at, self.valid_until, stale=self.stale or expired)
+        return replace(self, stale=self.stale or expired)
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "collected_at": self.collected_at,
-            "valid_until": self.valid_until,
-            "stale": self.stale,
-        }
+        return _export(
+            self.extensions,
+            {
+                "collected_at": self.collected_at,
+                "valid_until": self.valid_until,
+                "stale": self.stale,
+            },
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Freshness:
-        return cls(data["collected_at"], data["valid_until"], data.get("stale", False))
+        return cls(
+            data["collected_at"],
+            data["valid_until"],
+            data.get("stale", False),
+            extensions=_extensions(data, {"collected_at", "valid_until", "stale"}),
+        )
 
 
 def _timestamp(value: str) -> datetime:
@@ -202,6 +233,7 @@ class Enforcement:
     status: str
     mechanism: str
     policy_revision: int | None = None
+    extensions: dict[str, Any] = field(default_factory=dict, kw_only=True)
 
     def __post_init__(self) -> None:
         _require(self.status, ENFORCEMENT_STATUSES, "enforcement.status")
@@ -210,15 +242,23 @@ class Enforcement:
             raise ContractError("enforcement: status 'enforced' requires a mechanism")
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "status": self.status,
-            "mechanism": self.mechanism,
-            "policy_revision": self.policy_revision,
-        }
+        return _export(
+            self.extensions,
+            {
+                "status": self.status,
+                "mechanism": self.mechanism,
+                "policy_revision": self.policy_revision,
+            },
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Enforcement:
-        return cls(data["status"], data["mechanism"], data.get("policy_revision"))
+        return cls(
+            data["status"],
+            data["mechanism"],
+            data.get("policy_revision"),
+            extensions=_extensions(data, {"status", "mechanism", "policy_revision"}),
+        )
 
 
 @dataclass(frozen=True)
@@ -233,6 +273,8 @@ class AccessUnknown:
     detail: str
     collected_at: str
     schema_version: str = SCHEMA_VERSION
+    extensions: dict[str, Any] = field(default_factory=dict, kw_only=True)
+    scope_extensions: dict[str, Any] = field(default_factory=dict, kw_only=True)
 
     def __post_init__(self) -> None:
         _require_schema(self.schema_version)
@@ -245,15 +287,21 @@ class AccessUnknown:
         return finding.relation == self.relation and finding.object.startswith(self.object_prefix)
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "unknown_id": self.unknown_id,
-            "session_id": self.session_id,
-            "scope": {"relation": self.relation, "object_prefix": self.object_prefix},
-            "code": self.code,
-            "detail": self.detail,
-            "collected_at": self.collected_at,
-        }
+        return _export(
+            self.extensions,
+            {
+                "schema_version": self.schema_version,
+                "unknown_id": self.unknown_id,
+                "session_id": self.session_id,
+                "scope": _export(
+                    self.scope_extensions,
+                    {"relation": self.relation, "object_prefix": self.object_prefix},
+                ),
+                "code": self.code,
+                "detail": self.detail,
+                "collected_at": self.collected_at,
+            },
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AccessUnknown:
@@ -267,6 +315,19 @@ class AccessUnknown:
             detail=data["detail"],
             collected_at=data["collected_at"],
             schema_version=data.get("schema_version", SCHEMA_VERSION),
+            extensions=_extensions(
+                data,
+                {
+                    "schema_version",
+                    "unknown_id",
+                    "session_id",
+                    "scope",
+                    "code",
+                    "detail",
+                    "collected_at",
+                },
+            ),
+            scope_extensions=_extensions(scope, {"relation", "object_prefix"}),
         )
 
 
@@ -285,6 +346,7 @@ class AccessFinding:
     freshness: Freshness
     enforcement: Enforcement
     schema_version: str = SCHEMA_VERSION
+    extensions: dict[str, Any] = field(default_factory=dict, kw_only=True)
 
     def __post_init__(self) -> None:
         _require_schema(self.schema_version)
@@ -315,19 +377,22 @@ class AccessFinding:
         }
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "schema_version": self.schema_version,
-            "finding_id": self.finding_id,
-            "session_id": self.session_id,
-            "subject": self.subject,
-            "relation": self.relation,
-            "object": self.object,
-            "classification": self.classification,
-            "confidence": self.confidence,
-            "evidence": [item.as_dict() for item in self.evidence],
-            "freshness": self.freshness.as_dict(),
-            "enforcement": self.enforcement.as_dict(),
-        }
+        return _export(
+            self.extensions,
+            {
+                "schema_version": self.schema_version,
+                "finding_id": self.finding_id,
+                "session_id": self.session_id,
+                "subject": self.subject,
+                "relation": self.relation,
+                "object": self.object,
+                "classification": self.classification,
+                "confidence": self.confidence,
+                "evidence": [item.as_dict() for item in self.evidence],
+                "freshness": self.freshness.as_dict(),
+                "enforcement": self.enforcement.as_dict(),
+            },
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AccessFinding:
@@ -343,6 +408,22 @@ class AccessFinding:
             freshness=Freshness.from_dict(data["freshness"]),
             enforcement=Enforcement.from_dict(data["enforcement"]),
             schema_version=data.get("schema_version", SCHEMA_VERSION),
+            extensions=_extensions(
+                data,
+                {
+                    "schema_version",
+                    "finding_id",
+                    "session_id",
+                    "subject",
+                    "relation",
+                    "object",
+                    "classification",
+                    "confidence",
+                    "evidence",
+                    "freshness",
+                    "enforcement",
+                },
+            ),
         )
 
 
@@ -354,6 +435,7 @@ class Snapshot:
     findings: tuple[AccessFinding, ...]
     unknowns: tuple[AccessUnknown, ...] = ()
     schema_version: str = SCHEMA_VERSION
+    extensions: dict[str, Any] = field(default_factory=dict, kw_only=True)
 
     def __post_init__(self) -> None:
         _require_schema(self.schema_version)
@@ -392,31 +474,21 @@ class Snapshot:
     def marked_stale(self, now: str) -> Snapshot:
         """Return a copy with every finding's freshness evaluated at `now`."""
         findings = tuple(
-            AccessFinding(
-                finding_id=finding.finding_id,
-                session_id=finding.session_id,
-                subject=finding.subject,
-                relation=finding.relation,
-                object=finding.object,
-                classification=finding.classification,
-                confidence=finding.confidence,
-                evidence=finding.evidence,
-                freshness=finding.freshness.as_of(now),
-                enforcement=finding.enforcement,
-                schema_version=finding.schema_version,
-            )
-            for finding in self.findings
+            replace(finding, freshness=finding.freshness.as_of(now)) for finding in self.findings
         )
-        return Snapshot(self.session_id, findings, self.unknowns, self.schema_version)
+        return replace(self, findings=findings)
 
     def as_dict(self) -> dict[str, Any]:
         ordered = sorted(self.findings, key=_by_finding_id)
-        return {
-            "schema_version": self.schema_version,
-            "session_id": self.session_id,
-            "findings": [finding.as_dict() for finding in ordered],
-            "unknowns": [unknown.as_dict() for unknown in self.unknowns],
-        }
+        return _export(
+            self.extensions,
+            {
+                "schema_version": self.schema_version,
+                "session_id": self.session_id,
+                "findings": [finding.as_dict() for finding in ordered],
+                "unknowns": [unknown.as_dict() for unknown in self.unknowns],
+            },
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Snapshot:
@@ -425,6 +497,7 @@ class Snapshot:
             findings=tuple(AccessFinding.from_dict(item) for item in data["findings"]),
             unknowns=tuple(AccessUnknown.from_dict(item) for item in data.get("unknowns", ())),
             schema_version=data.get("schema_version", SCHEMA_VERSION),
+            extensions=_extensions(data, {"schema_version", "session_id", "findings", "unknowns"}),
         )
 
 
