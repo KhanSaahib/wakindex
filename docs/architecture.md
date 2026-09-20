@@ -149,6 +149,81 @@ ID is derived deterministically from endpoint, workspace identifier, account ID,
 source so inventories can be merged across a fleet without common project-path collisions. Model
 status is either `configured` or `runtime-selected`; missing information is not guessed.
 
+## Access graph and snapshot store
+
+The access graph is a separate runtime schema from the manifest above, with its own records, its
+own version, and its own parser. It describes what a supervised agent session can reach, not what
+a repository declares, and the two must not be merged: overloading one schema with both would make
+a static configuration finding indistinguishable from an enforced boundary.
+
+A finding is an edge — subject, relation, object — carrying provenance, confidence, freshness and
+enforcement status. `classification` records how the access was learned:
+
+- `declared` — read from configuration. Not evidence that the access works.
+- `observed` — seen in use. Not evidence of the full extent of the permission.
+- `inferred` — derived reachability. Not evidence that the far side would authorize the call.
+- `enforced` — a boundary is installed for the named policy revision.
+
+Only `enforced` supports a negative claim, so `AccessFinding` refuses to be constructed with
+classification `enforced` unless the enforcement status agrees.
+
+A scope a collector could not read is recorded as an `AccessUnknown`, never as an omission.
+Unknowns carry a code such as `collector_permission_denied` and a relation-plus-prefix scope.
+
+A snapshot separates a normalized form from an evidence sidecar. The normalized form holds only
+stable fields, sorted by finding ID, so two scans of an unchanged environment produce identical
+bytes; timestamps, descriptors and evidence bodies live in the sidecar and never move a diff.
+
+`diff(before, after)` returns `added`, `removed`, `changed` and `indeterminate`. A finding missing
+from the later snapshot is `removed` only when no unknown in that snapshot covers its scope;
+otherwise it is `indeterminate`. Reporting a collector failure as revoked access would tell an
+operator that a permission is gone when it may still be there.
+
+`GraphStore` persists snapshots in SQLite with versioned migrations. Each snapshot is written in
+one transaction, so a failed write leaves no snapshot that is missing its unknowns and therefore
+reads as a complete scan. A migration that would reduce the stored evidence count is rolled back,
+and a store written by a newer build is refused rather than read on a guess.
+
+Evidence and unknown detail are checked against credential-shaped patterns on construction. A
+value that looks like a secret fails the write rather than being persisted and redacted later.
+
+## Access collectors
+
+Collectors populate the access graph from a running process tree. They read process metadata
+under `/proc` and nothing else: opening a discovered file to learn more about it would make a
+collector an execution path for whatever wrote that file, and an inherited descriptor is exactly
+what an adversary would point at something it wants read.
+
+The framework, not each collector, enforces the budget. Findings are capped, per-scope
+enumeration is capped, and a pass that runs past its deadline records a timeout instead of
+continuing. Every failure becomes an `AccessUnknown` over the scope that failed, because a scope
+nobody looked at is otherwise indistinguishable from a scope with nothing in it. Each collector
+declares the scopes it owns, so a collector that fails outright leaves those scopes marked unseen
+rather than leaving its findings uncovered.
+
+`PrincipalCollector` records real, effective, saved and filesystem uid and gid separately, plus
+supplementary groups and the effective capability mask. An unreadable capability line is an
+unknown, never an empty set: an empty set means the process holds nothing, and reporting an
+unreadable one that way understates what the process can do. When the process shares the
+operator's effective uid it records that as a finding, because the containment story does not
+apply to that profile at all.
+
+`LineageCollector` walks the tree and records descendants, working directory, root and inherited
+descriptors. A process that exits mid-walk is recorded as an unknown rather than dropped — it
+existed, and a reader judging whether the tree was contained needs to know. A tree that grows
+during the walk records a `partial_enumeration`, so an agent that forks while being read cannot
+hide a descendant for free. Descriptor targets are read as link targets only and reported as the
+kernel gives them, including a `(deleted)` marker; reconstructing a path after a rename would
+name a file that may now be something else.
+
+`MountCollector` records mount points, sources, filesystem types, read-only status and
+propagation mode. Propagation matters because a shared mount can carry a mount created on the
+host into the perimeter after launch, so a boundary complete at launch may not stay that way. An
+unreadable mount table is an unknown over the whole filesystem scope, never an empty mount list.
+
+None of these collectors installs or inspects an enforcement boundary, so every finding they
+produce carries enforcement status `unknown`.
+
 ## Permission taxonomy
 
 Current permission IDs:
