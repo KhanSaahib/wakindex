@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from wakindex.collectors.base import CollectorContext
+from wakindex.collectors.base import CollectorContext, _classify
 from wakindex.graph import Evidence
 from wakindex.scanners import scan_config_file
 
@@ -39,6 +39,8 @@ class ToolCollector:
         ("can-invoke", "tool_server:"),
         ("can-execute", "resource:file:"),
         ("can-connect", "resource:net:"),
+        ("can-read", "resource:file:"),
+        ("can-write", "resource:file:"),
     )
 
     def __init__(self, config_paths: tuple[Path, ...], workspace_root: Path) -> None:
@@ -47,45 +49,47 @@ class ToolCollector:
 
     def collect(self, context: CollectorContext) -> None:
         for path in self.config_paths:
-            self._record_config(context, path)
+            try:
+                context.check_deadline()
+                self._record_config(context, path)
+            except Exception as err:  # noqa: BLE001 - failed config must cover every output scope
+                code, _ = _classify(err)
+                self._unknown_scopes(context, code, "configuration scan failed")
+                if context.deadline_passed:
+                    break
+
+    def _unknown_scopes(self, context: CollectorContext, code: str, detail: str) -> None:
+        # Until source-specific coverage is stored, a failed config can affect any capability
+        # this collector reports. A config-path prefix cannot cover an MCP server or file edge.
+        for relation, prefix in self.scopes:
+            context.unknown(relation=relation, object_prefix=prefix, code=code, detail=detail)
 
     def _record_config(self, context: CollectorContext, path: Path) -> None:
         if not path.exists():
-            context.unknown(
-                relation="can-invoke",
-                object_prefix=f"tool_server:config:{path}",
-                code="agent_config_unreadable",
-                detail=f"configured path {path} does not exist",
+            self._unknown_scopes(
+                context, "agent_config_unreadable", "configured path does not exist"
             )
             return
 
-        findings = ()
-        with context.guard(
-            relation="can-invoke",
-            object_prefix=f"tool_server:config:{path}",
-            detail=f"scanning {path.name}",
-        ):
-            findings = scan_config_file(
-                path,
-                workspace_root=self.workspace_root,
-                source=str(path),
-                provider=_provider_for(path),
-                scope="workspace",
-                redact_prefix=None,
-            )
+        findings = scan_config_file(
+            path,
+            workspace_root=self.workspace_root,
+            source=str(path),
+            provider=_provider_for(path),
+            scope="workspace",
+            redact_prefix=None,
+        )
 
         if not findings:
             # A file that parsed to nothing and a file that could not be parsed look identical
             # from here, so neither is reported as "this agent reaches nothing".
-            context.unknown(
-                relation="can-invoke",
-                object_prefix=f"tool_server:config:{path}",
-                code="agent_config_unreadable",
-                detail=f"{path.name} yielded no configuration; it may be empty or unparseable",
+            self._unknown_scopes(
+                context, "agent_config_unreadable", "configuration may be empty or unparseable"
             )
             return
 
         servers: set[str] = set()
+        visited = 0
         for finding in context.bounded(
             [str(index) for index in range(len(findings))],
             relation="can-invoke",
@@ -93,6 +97,10 @@ class ToolCollector:
             detail=f"configuration entries in {path.name}",
         ):
             self._record_finding(context, findings[int(finding)], path, servers)
+            visited += 1
+        if visited < len(findings):
+            code = "collector_timeout" if context.deadline_passed else "collector_bounded_out"
+            self._unknown_scopes(context, code, "configuration enumeration was incomplete")
 
     def _record_finding(self, context, finding, path: Path, servers: set[str]) -> None:
         server = finding.metadata.get("server")
