@@ -276,6 +276,21 @@ def test_read_proc_text_refuses_a_path_outside_proc(tmp_path):
         context.read_proc_text(target)
 
 
+def test_read_proc_text_refuses_a_traversal_that_lexically_starts_with_proc(tmp_path):
+    """A `..`-laden path can start with the string `/proc/` while resolving outside it.
+
+    The old check tested `str(path).startswith("/proc/")` without resolving the path first, so
+    `/proc/self/../../../../etc/passwd` passed the string test while actually reading a file
+    nowhere near /proc. No current caller builds a path like this, but the guarantee must hold
+    even if one someday does.
+    """
+    context = make_context()
+    escaped = Path("/proc/self/../../../../etc/passwd")
+
+    with pytest.raises(ValueError, match="only /proc metadata"):
+        context.read_proc_text(escaped)
+
+
 def test_read_proc_text_reads_process_metadata():
     context = make_context()
     assert "Name:" in context.read_proc_text(Path("/proc/self/status"))

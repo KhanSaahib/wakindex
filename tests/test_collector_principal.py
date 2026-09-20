@@ -85,13 +85,19 @@ def test_a_missing_uid_line_is_unknown_not_an_absent_principal():
 
 
 def test_a_process_that_does_not_exist_produces_unknowns_over_every_scope():
-    """A vanished process must leave its scopes marked unseen, not silently empty."""
+    """A vanished process must leave its scopes marked unseen, not silently empty.
+
+    Regression: `_read_status` used to catch its own read failure with `context.guard`, which
+    only covers the one scope it is given (`principal:uid:`). The exception never reached
+    `run_collectors`'s catch-all, so `principal:gid:` and `principal:capability:` read back as
+    covered by zero unknowns after a total read failure -- silently empty, not unknown.
+    """
     collector = PrincipalCollector(2**30)
     snapshot = run_collectors([collector], make_context())
 
     assert snapshot.findings == ()
     prefixes = {unknown.object_prefix for unknown in snapshot.unknowns}
-    assert "principal:uid:" in prefixes
+    assert {"principal:uid:", "principal:gid:", "principal:capability:"} <= prefixes
 
 
 def test_sharing_the_operator_identity_is_recorded_as_a_finding():
