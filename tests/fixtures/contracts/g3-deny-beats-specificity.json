@@ -1,0 +1,45 @@
+{
+  "description": "G3: a broad deny beats a more specific allow. Specificity never changes the outcome.",
+  "policy": {
+    "schema_version": "1.0",
+    "revision": 1,
+    "parent_revision": null,
+    "created_at": "2026-09-20T17:38:00Z",
+    "created_by": "principal:uid:1000",
+    "rules": [
+      {
+        "id": "r-deny-all-reads",
+        "effect": "deny",
+        "capability": "file.read",
+        "match": { "any": true },
+        "reason_code": "DENY_EXPLICIT_RULE"
+      },
+      {
+        "id": "r-allow-readme",
+        "effect": "allow",
+        "capability": "file.read",
+        "match": { "path": "/home/op/project/README.md" },
+        "reason_code": "ALLOW_RULE"
+      }
+    ],
+    "budgets": {
+      "cpu_ms": 600000,
+      "memory_bytes": 2147483648,
+      "pids": 256,
+      "storage_bytes": 1073741824,
+      "wall_ms": 1800000
+    }
+  },
+  "cases": [
+    {
+      "name": "exact-match allow does not override a broad deny",
+      "capability": "file.read",
+      "resource": "resource:file:/home/op/project/README.md",
+      "expected": {
+        "effect": "deny",
+        "reason_code": "DENY_EXPLICIT_RULE",
+        "matched_rule_id": "r-deny-all-reads"
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "description": "G6: a session persisted as running with no surviving processes reconciles to stopped.",
+  "persisted_state": {
+    "schema_version": "1.0",
+    "session_id": "s:01JBQ2ZK4M",
+    "state": "running",
+    "policy_revision": 4,
+    "incident_id": null,
+    "persisted_at": "2026-09-20T17:43:59Z"
+  },
+  "observed_after_restart": { "surviving_pids": [] },
+  "expected": {
+    "state": "stopped",
+    "reason": "reconciled",
+    "forbidden_states": ["running"],
+    "relaunched": false
+  }
+}

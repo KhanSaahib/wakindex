@@ -37,6 +37,17 @@ python -m ruff check .
 git diff --check
 ```
 
+For offline guarantees, dependency, or build-script changes:
+
+```bash
+python scripts/offline_bundle.py fetch
+python -m venv /tmp/wakindex-offline-venv
+scripts/verify_offline.sh /tmp/wakindex-offline-venv
+```
+
+See [docs/offline-build.md](docs/offline-build.md) for the dependency inventory and the full
+procedure.
+
 For packaging, Docker, entrypoint, action, or release changes:
 
 ```bash

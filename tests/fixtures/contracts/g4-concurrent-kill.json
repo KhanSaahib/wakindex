@@ -1,0 +1,21 @@
+{
+  "description": "G4: three concurrent kill requests converge on one incident and one deadline.",
+  "session_id": "s:01JBQ2ZK4M",
+  "requests": [
+    { "request_id": "q:a", "received_at": "2026-09-20T17:44:00.000Z", "caller": "principal:uid:1000" },
+    { "request_id": "q:b", "received_at": "2026-09-20T17:44:00.004Z", "caller": "principal:uid:1000" },
+    { "request_id": "q:c", "received_at": "2026-09-20T17:44:00.009Z", "caller": "principal:uid:1000" }
+  ],
+  "expected": {
+    "incident_id": "i:01JBQ30000",
+    "responses": [
+      { "request_id": "q:a", "incident_id": "i:01JBQ30000", "created_incident": true },
+      { "request_id": "q:b", "incident_id": "i:01JBQ30000", "created_incident": false },
+      { "request_id": "q:c", "incident_id": "i:01JBQ30000", "created_incident": false }
+    ],
+    "deadline_set_by": "q:a",
+    "deadline_at": "2026-09-20T17:44:02.000Z",
+    "state_sequence": ["running", "stopping", "stopped"],
+    "incident_count": 1
+  }
+}

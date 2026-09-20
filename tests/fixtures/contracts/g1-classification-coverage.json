@@ -1,0 +1,118 @@
+{
+  "description": "G1: one finding of each classification plus one unknown, per ALP-158 section 7.",
+  "schema_version": "1.0",
+  "session_id": "s:01JBQ2ZK4M",
+  "findings": [
+    {
+      "schema_version": "1.0",
+      "finding_id": "f:0001declared",
+      "session_id": "s:01JBQ2ZK4M",
+      "subject": "session:01JBQ2ZK4M",
+      "relation": "can-invoke",
+      "object": "tool_server:mcp:github",
+      "classification": "declared",
+      "confidence": "high",
+      "evidence": [
+        {
+          "source": "agent_config",
+          "collector": "collect.tools",
+          "collected_at": "2026-09-20T17:40:02Z",
+          "detail": "mcpServers.github declared in .mcp.json"
+        }
+      ],
+      "freshness": {
+        "collected_at": "2026-09-20T17:40:02Z",
+        "valid_until": "2026-09-20T17:45:02Z",
+        "stale": false
+      },
+      "enforcement": { "status": "unenforced", "mechanism": "none", "policy_revision": 4 },
+      "unknowns": []
+    },
+    {
+      "schema_version": "1.0",
+      "finding_id": "f:0002observed",
+      "session_id": "s:01JBQ2ZK4M",
+      "subject": "session:01JBQ2ZK4M",
+      "relation": "can-read",
+      "object": "resource:file:/home/op/project/README.md",
+      "classification": "observed",
+      "confidence": "high",
+      "evidence": [
+        {
+          "source": "proc_fd",
+          "collector": "collect.files",
+          "collected_at": "2026-09-20T17:40:03Z",
+          "detail": "open file descriptor 7 in managed process tree"
+        }
+      ],
+      "freshness": {
+        "collected_at": "2026-09-20T17:40:03Z",
+        "valid_until": "2026-09-20T17:45:03Z",
+        "stale": false
+      },
+      "enforcement": { "status": "enforced", "mechanism": "landlock-fs", "policy_revision": 4 },
+      "unknowns": []
+    },
+    {
+      "schema_version": "1.0",
+      "finding_id": "f:0003inferred",
+      "session_id": "s:01JBQ2ZK4M",
+      "subject": "session:01JBQ2ZK4M",
+      "relation": "can-connect",
+      "object": "resource:net:tcp/140.82.121.4:443",
+      "classification": "inferred",
+      "confidence": "low",
+      "evidence": [
+        {
+          "source": "route_table",
+          "collector": "collect.network",
+          "collected_at": "2026-09-20T17:40:04Z",
+          "detail": "default route present; destination reachability inferred, not attempted"
+        }
+      ],
+      "freshness": {
+        "collected_at": "2026-09-20T17:40:04Z",
+        "valid_until": "2026-09-20T17:45:04Z",
+        "stale": false
+      },
+      "enforcement": { "status": "enforced", "mechanism": "netns", "policy_revision": 4 },
+      "unknowns": []
+    },
+    {
+      "schema_version": "1.0",
+      "finding_id": "f:0004enforced",
+      "session_id": "s:01JBQ2ZK4M",
+      "subject": "session:01JBQ2ZK4M",
+      "relation": "can-read",
+      "object": "resource:file:/home/op/project",
+      "classification": "enforced",
+      "confidence": "high",
+      "evidence": [
+        {
+          "source": "landlock_ruleset",
+          "collector": "perimeter.fs",
+          "collected_at": "2026-09-20T17:40:02Z",
+          "detail": "LANDLOCK_ACCESS_FS_READ_FILE on /home/op/project"
+        }
+      ],
+      "freshness": {
+        "collected_at": "2026-09-20T17:40:02Z",
+        "valid_until": "2026-09-20T17:45:02Z",
+        "stale": false
+      },
+      "enforcement": { "status": "enforced", "mechanism": "landlock-fs", "policy_revision": 4 },
+      "unknowns": []
+    }
+  ],
+  "unknowns": [
+    {
+      "schema_version": "1.0",
+      "unknown_id": "u:2f40aa",
+      "session_id": "s:01JBQ2ZK4M",
+      "scope": { "relation": "can-read", "object_prefix": "resource:file:/proc" },
+      "code": "collector_permission_denied",
+      "detail": "opendir /proc/1/fd: EACCES",
+      "collected_at": "2026-09-20T17:40:02Z"
+    }
+  ]
+}

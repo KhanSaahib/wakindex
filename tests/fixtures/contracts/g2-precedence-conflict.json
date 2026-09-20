@@ -1,0 +1,81 @@
+{
+  "description": "G2: overlapping allow and deny on the same path; deny wins, per ALP-158 section 3.2.",
+  "policy": {
+    "schema_version": "1.0",
+    "revision": 4,
+    "parent_revision": 3,
+    "created_at": "2026-09-20T17:38:00Z",
+    "created_by": "principal:uid:1000",
+    "rules": [
+      {
+        "id": "r-fs-project",
+        "effect": "allow",
+        "capability": "file.read",
+        "match": { "path_prefix": "/home/op/project" },
+        "reason_code": "ALLOW_RULE"
+      },
+      {
+        "id": "r-fs-secrets",
+        "effect": "deny",
+        "capability": "file.read",
+        "match": { "path_prefix": "/home/op/project/.env" },
+        "reason_code": "DENY_EXPLICIT_RULE"
+      },
+      {
+        "id": "r-net-offline",
+        "effect": "deny",
+        "capability": "net.connect",
+        "match": { "any": true },
+        "reason_code": "DENY_EXPLICIT_RULE"
+      },
+      {
+        "id": "r-tool-fmt",
+        "effect": "allow",
+        "capability": "tool.invoke",
+        "match": { "tool": "fs", "method": "format" },
+        "reason_code": "ALLOW_RULE"
+      }
+    ],
+    "budgets": {
+      "cpu_ms": 600000,
+      "memory_bytes": 2147483648,
+      "pids": 256,
+      "storage_bytes": 1073741824,
+      "wall_ms": 1800000
+    }
+  },
+  "cases": [
+    {
+      "name": "deny wins over overlapping allow",
+      "capability": "file.read",
+      "resource": "resource:file:/home/op/project/.env",
+      "expected": {
+        "effect": "deny",
+        "reason_code": "DENY_EXPLICIT_RULE",
+        "matched_rule_id": "r-fs-secrets"
+      }
+    },
+    {
+      "name": "allow applies where no deny matches",
+      "capability": "file.read",
+      "resource": "resource:file:/home/op/project/README.md",
+      "expected": {
+        "effect": "allow",
+        "reason_code": "ALLOW_RULE",
+        "matched_rule_id": "r-fs-project"
+      }
+    },
+    {
+      "name": "no matching rule is denied by default",
+      "capability": "file.write",
+      "resource": "resource:file:/home/op/project/README.md",
+      "expected": { "effect": "deny", "reason_code": "DENY_DEFAULT", "matched_rule_id": null }
+    },
+    {
+      "name": "unlisted tool method is denied by default",
+      "capability": "tool.invoke",
+      "resource": "tool_server:mcp:fs#delete",
+      "expected": { "effect": "deny", "reason_code": "DENY_DEFAULT", "matched_rule_id": null }
+    }
+  ]
+}
