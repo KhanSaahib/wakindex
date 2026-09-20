@@ -1,0 +1,62 @@
+{
+  "description": "G5: a failed collector yields indeterminate, never removed.",
+  "snapshot_a": {
+    "schema_version": "1.0",
+    "normalized": [
+      {
+        "finding_id": "f:0005procenv",
+        "subject": "session:01JBQ2ZK4M",
+        "relation": "can-read",
+        "object": "resource:file:/proc/1/environ",
+        "classification": "observed",
+        "enforcement_status": "unenforced",
+        "enforcement_mechanism": "none",
+        "policy_revision": 4
+      },
+      {
+        "finding_id": "f:0006readme",
+        "subject": "session:01JBQ2ZK4M",
+        "relation": "can-read",
+        "object": "resource:file:/home/op/project/README.md",
+        "classification": "observed",
+        "enforcement_status": "enforced",
+        "enforcement_mechanism": "landlock-fs",
+        "policy_revision": 4
+      }
+    ],
+    "unknowns": []
+  },
+  "snapshot_b": {
+    "schema_version": "1.0",
+    "normalized": [
+      {
+        "finding_id": "f:0006readme",
+        "subject": "session:01JBQ2ZK4M",
+        "relation": "can-read",
+        "object": "resource:file:/home/op/project/README.md",
+        "classification": "observed",
+        "enforcement_status": "enforced",
+        "enforcement_mechanism": "landlock-fs",
+        "policy_revision": 4
+      }
+    ],
+    "unknowns": [
+      {
+        "schema_version": "1.0",
+        "unknown_id": "u:9c11bb",
+        "session_id": "s:01JBQ2ZK4M",
+        "scope": { "relation": "can-read", "object_prefix": "resource:file:/proc" },
+        "code": "collector_permission_denied",
+        "detail": "opendir /proc/1: EACCES",
+        "collected_at": "2026-09-20T17:50:00Z"
+      }
+    ]
+  },
+  "expected_diff": {
+    "added": [],
+    "removed": [],
+    "changed": [],
+    "indeterminate": ["f:0005procenv"],
+    "carried_unknowns": ["u:9c11bb"]
+  }
+}

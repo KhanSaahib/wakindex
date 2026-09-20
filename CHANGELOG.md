@@ -10,6 +10,12 @@ All notable user-visible changes to wakindex are recorded here. The format follo
 
 ### Added
 
+- Offline dependency bundle, pinned and hashed dev dependency lock, and an offline build,
+  install, and test procedure documented in `docs/offline-build.md`.
+- `scripts/verify_offline.sh`, which runs install, tests, and the wheel build inside a network
+  namespace with no external route.
+- Regression tests rejecting outbound network clients in the runtime.
+- Golden contract fixtures for the access graph, policy precedence, and session lifecycle.
 - Local-first scanner, policy engine, CLI, SARIF output, browser policy editor, Docker image, and
   GitHub Action.
 - Tag-driven GitHub Release workflow with wheel artifacts and SHA-256 checksums.
