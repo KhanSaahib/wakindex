@@ -7,6 +7,7 @@ import pytest
 
 from wakindex.collectors.base import Budget, CollectorContext, run_collectors
 from wakindex.collectors.lineage import LineageCollector
+from wakindex.graph import AccessFinding, Enforcement, Evidence, Freshness
 
 NOW = "2026-09-20T18:00:00Z"
 UNTIL = "2026-09-20T18:05:00Z"
@@ -150,9 +151,7 @@ def test_a_renamed_descriptor_target_is_reported_as_observed_not_guessed(tmp_pat
 
         context = make_context()
         collector = LineageCollector(os.getpid())
-        observed = collector._read_link(
-            context, f"/proc/self/fd/{handle.fileno()}", "process_identity:pid:self"
-        )
+        observed = collector._read_link(context, f"/proc/self/fd/{handle.fileno()}")
 
         assert observed is not None
         assert observed.endswith("renamed.txt")
@@ -170,7 +169,7 @@ def test_a_deleted_descriptor_target_keeps_the_kernels_deleted_marker(tmp_path):
 
         context = make_context()
         observed = LineageCollector(os.getpid())._read_link(
-            context, f"/proc/self/fd/{handle.fileno()}", "process_identity:pid:self"
+            context, f"/proc/self/fd/{handle.fileno()}"
         )
 
         assert observed is not None
@@ -181,10 +180,47 @@ def test_a_deleted_descriptor_target_keeps_the_kernels_deleted_marker(tmp_path):
 
 def test_a_vanished_link_yields_nothing_rather_than_an_invented_path():
     context = make_context()
-    observed = LineageCollector(os.getpid())._read_link(
-        context, "/proc/self/fd/999999", "process_identity:pid:self"
-    )
+    observed = LineageCollector(os.getpid())._read_link(context, "/proc/self/fd/999999")
     assert observed is None
+
+
+def test_a_denied_link_read_records_an_unknown_that_can_cover_a_file_finding(monkeypatch):
+    """The unknown from a failed link read must be able to cover a can-read/file finding.
+
+    Regression: this used to scope the unknown to the process identity
+    ("process_identity:pid:N"), but every can-read finding this collector emits is named by its
+    *target* path under "resource:file:...". The two namespaces never overlapped, so
+    AccessUnknown.covers could never match -- a link readable on one scan and denied on the next
+    would report as `removed` (a real access change) instead of `indeterminate` (a scan failure),
+    the opposite of what this mechanism exists to prevent.
+    """
+
+    def deny(path):
+        raise PermissionError(13, "denied")
+
+    monkeypatch.setattr(os, "readlink", deny)
+    context = make_context()
+    LineageCollector(os.getpid())._read_link(context, "/proc/self/cwd")
+
+    snapshot = context.snapshot()
+    assert len(snapshot.unknowns) == 1
+    unknown = snapshot.unknowns[0]
+    assert unknown.relation == "can-read"
+    assert unknown.object_prefix == "resource:file:"
+
+    would_be_finding = AccessFinding(
+        finding_id="f:cwd",
+        session_id="s:test",
+        subject="process_identity:pid:1",
+        relation="can-read",
+        object="resource:file:/home/op/project",
+        classification="observed",
+        confidence="high",
+        evidence=(Evidence("proc_cwd", "collect.lineage", NOW, "cwd of pid 1"),),
+        freshness=Freshness(NOW, UNTIL),
+        enforcement=Enforcement("unknown", "none"),
+    )
+    assert unknown.covers(would_be_finding)
 
 
 # -- bounds ----------------------------------------------------------------------------------
