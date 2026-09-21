@@ -153,7 +153,7 @@ class LineageCollector:
     def _record_link(
         self, context: CollectorContext, pid: int, identity: str, link: str, label: str
     ) -> None:
-        target = self._read_link(context, PROC / str(pid) / link, identity)
+        target = self._read_link(context, PROC / str(pid) / link)
         if target is None:
             return
         context.emit(
@@ -201,7 +201,7 @@ class LineageCollector:
             object_prefix=f"resource:file:/proc/{pid}/fd",
             detail=f"descriptors of pid {pid}",
         ):
-            target = self._read_link(context, fd_dir / fd, identity)
+            target = self._read_link(context, fd_dir / fd)
             if target is None:
                 continue
             context.emit(
@@ -222,14 +222,22 @@ class LineageCollector:
                 ),
             )
 
-    def _read_link(
-        self, context: CollectorContext, path: Path | str, identity: str
-    ) -> str | None:
+    def _read_link(self, context: CollectorContext, path: Path | str) -> str | None:
         """Read a link target, reporting what was observed rather than guessing after a rename.
 
         A target that has been renamed or deleted under us is reported as what the kernel says --
         including a "(deleted)" suffix -- because the alternative is inventing a path that may now
         belong to a different file.
+
+        A failed read is scoped to the whole `resource:file:` namespace this relation uses, not
+        to the process identity: the finding this read would have produced is named by its
+        *target* path, which is exactly what a failed read never learns, so there is no narrower
+        prefix this unknown could name and still cover it. `AccessUnknown` has no per-subject
+        scope to narrow this to just this pid's own findings either. This over-covers -- a failed
+        readlink for one pid can mark an unrelated pid's can-read/file finding as indeterminate
+        rather than removed -- but that is the safe direction of error: reporting a real access
+        removal as "unknown, scan failed here" is a false negative for containment, and this
+        system's stated rule is to never let unknown look safe.
         """
         link = Path(path)
         try:
@@ -239,7 +247,7 @@ class LineageCollector:
         except PermissionError as err:
             context.unknown(
                 relation="can-read",
-                object_prefix=identity,
+                object_prefix="resource:file:",
                 code="collector_permission_denied",
                 detail=f"reading link {link.name}: {err.strerror or 'permission denied'}",
             )
@@ -247,7 +255,7 @@ class LineageCollector:
         except OSError as err:
             context.unknown(
                 relation="can-read",
-                object_prefix=identity,
+                object_prefix="resource:file:",
                 code="partial_enumeration",
                 detail=f"reading link {link.name}: {type(err).__name__}",
             )

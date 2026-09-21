@@ -104,6 +104,31 @@ def _require_node_id(value: str, field: str) -> str:
     return value
 
 
+# Node ids are segments joined by ":" (kind:kind:...) with a trailing path segment sometimes
+# joined by "/" (e.g. "resource:file:/home/op/project"). Either character is a real boundary
+# between one identity and the next.
+_ID_BOUNDARY_CHARS = (":", "/")
+
+
+def _object_within(object_id: str, prefix: str) -> bool:
+    """True when `object_id` is `prefix` or a real sub-identity of it.
+
+    A plain `str.startswith` treats "process_identity:pid:1" as a prefix of
+    "process_identity:pid:11" -- they share no boundary, just a decimal digit, so an unknown
+    scoped to pid 1 would wrongly cover pid 11's findings too. A prefix that already ends on a
+    boundary (like "principal:uid:", meant to cover every uid) needs no further check; one that
+    does not must be followed by a boundary character in `object_id`, not by an arbitrary
+    continuation of the same segment.
+    """
+    if object_id == prefix:
+        return True
+    if not object_id.startswith(prefix):
+        return False
+    if prefix.endswith(_ID_BOUNDARY_CHARS):
+        return True
+    return object_id[len(prefix)] in _ID_BOUNDARY_CHARS
+
+
 def _require_schema(value: str) -> str:
     if not re.fullmatch(r"\d+\.\d+", value):
         raise ContractError(f"schema_version: {value!r} is not MAJOR.MINOR")
@@ -284,7 +309,9 @@ class AccessUnknown:
 
     def covers(self, finding: AccessFinding) -> bool:
         """True when this unknown makes statements about the finding indeterminate."""
-        return finding.relation == self.relation and finding.object.startswith(self.object_prefix)
+        return finding.relation == self.relation and _object_within(
+            finding.object, self.object_prefix
+        )
 
     def as_dict(self) -> dict[str, Any]:
         return _export(

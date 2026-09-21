@@ -260,6 +260,50 @@ def test_diff_unknown_scope_matches_on_relation_too():
     assert result.indeterminate == ()
 
 
+def test_diff_does_not_let_a_pid_prefix_swallow_a_different_pid():
+    """An unknown scoped to pid 1 must not cover pid 11 just because "1" is a prefix of "11".
+
+    Regression: `AccessUnknown.covers` used a plain `str.startswith`, so an unknown with
+    object_prefix "process_identity:pid:1" wrongly matched "process_identity:pid:11",
+    "process_identity:pid:100", and so on -- any object sharing the decimal digits, not just
+    the same process. A pid that genuinely exited between scans would then be reported as
+    indeterminate instead of removed.
+    """
+    other_pid = make_finding(
+        "f:pid11", relation="contains", obj="process_identity:pid:11", classification="observed"
+    )
+    before = Snapshot("s:1", (other_pid,))
+    after = Snapshot(
+        "s:1",
+        (),
+        (make_unknown("u:pid1", relation="contains", prefix="process_identity:pid:1"),),
+    )
+
+    result = diff(before, after)
+    assert result.removed == ("f:pid11",)
+    assert result.indeterminate == ()
+
+
+def test_diff_still_covers_the_exact_pid_the_unknown_names():
+    """The boundary check must not overcorrect into never matching a real sub-identity."""
+    same_pid_child = make_finding(
+        "f:pid1child",
+        relation="contains",
+        obj="process_identity:pid:1",
+        classification="observed",
+    )
+    before = Snapshot("s:1", (same_pid_child,))
+    after = Snapshot(
+        "s:1",
+        (),
+        (make_unknown("u:pid1", relation="contains", prefix="process_identity:pid:1"),),
+    )
+
+    result = diff(before, after)
+    assert result.removed == ()
+    assert result.indeterminate == ("f:pid1child",)
+
+
 def test_diff_of_identical_snapshots_is_empty():
     snapshot = Snapshot("s:1", (make_finding("f:a"), make_finding("f:b")))
     assert diff(snapshot, snapshot).is_empty
