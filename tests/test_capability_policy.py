@@ -171,6 +171,35 @@ def test_a_revision_cannot_be_mutated_in_place():
         revision.rules[0].effect = "deny"  # type: ignore[misc]
 
 
+def test_a_rules_match_mapping_cannot_be_mutated_in_place():
+    """`frozen=True` blocks reassigning `rule.match`; it does nothing to its contents.
+
+    Regression: `Rule.match` used to be a plain `dict`, so `rule.match["path_prefix"] = "/"`
+    succeeded silently -- no FrozenInstanceError, nothing -- and changed what the rule matches
+    for every holder of the object. Demonstrated end to end: a deny of /etc/shadow flips to an
+    allow with no error raised anywhere.
+    """
+    revision = validate_revision(base_document())
+    deny = evaluate(revision, request(resource="resource:file:/etc/shadow"))
+    assert deny.effect == "deny"
+
+    with pytest.raises(TypeError):
+        revision.rules[0].match["path_prefix"] = "/"
+
+    still_denied = evaluate(revision, request(resource="resource:file:/etc/shadow"))
+    assert still_denied.effect == "deny"
+
+
+def test_a_revisions_budget_limits_cannot_be_mutated_in_place():
+    """Same gap, same fix, for `Budgets.limits`."""
+    revision = validate_revision(base_document())
+
+    with pytest.raises(TypeError):
+        revision.budgets.limits["pids"] = 999_999_999
+
+    assert revision.budgets.limits["pids"] == 256
+
+
 def test_the_digest_is_stable_across_key_order_and_whitespace():
     """Two spellings of the same policy are the same policy, and must digest identically."""
     first = validate_revision(base_document())
