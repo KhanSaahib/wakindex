@@ -200,7 +200,7 @@ def _require_mapping(value: Any, where: str) -> dict[str, Any]:
     return value
 
 
-def _validate_match(match: Any, rule_id: str) -> dict[str, Any]:
+def _validate_match(match: Any, rule_id: str, capability: str) -> dict[str, Any]:
     where = f"rule {rule_id} match"
     data = _require_mapping(match, where)
     _reject_unknown(data, _MATCH_KEYS, where)
@@ -213,6 +213,17 @@ def _validate_match(match: Any, rule_id: str) -> dict[str, Any]:
         if len(data) != 1:
             raise PolicyInvalid(f"{where}: 'any' cannot be combined with another selector")
         return dict(data)
+
+    if capability.startswith("file.") or capability == "proc.spawn":
+        allowed = {"path", "path_prefix"}
+    elif capability.startswith("net."):
+        allowed = {"host"}
+    elif capability == "tool.invoke":
+        allowed = {"tool", "method"}
+    else:
+        allowed = set()
+    if set(data) - allowed:
+        raise PolicyInvalid(f"{where}: selectors are not supported for {capability}")
 
     for key in ("path", "path_prefix"):
         if key in data and canonical_path(data[key]) is None:
@@ -260,7 +271,7 @@ def _validate_rule(raw: Any, index: int, seen: set[str]) -> Rule:
         id=rule_id,
         effect=effect,
         capability=capability,
-        match=_validate_match(data["match"], rule_id),
+        match=_validate_match(data["match"], rule_id, capability),
         reason_code=reason_code,
     )
 
@@ -337,9 +348,11 @@ class Request:
     usage: dict[str, int] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
-        if self.capability not in CAPABILITIES:
+        if not isinstance(self.capability, str) or self.capability not in CAPABILITIES:
             raise PolicyError(f"unknown capability {self.capability!r}")
-        object.__setattr__(self, "usage", dict(self.usage or {}))
+        usage = {} if self.usage is None else self.usage
+        _validate_budgets(usage)
+        object.__setattr__(self, "usage", dict(usage))
 
 
 @dataclass(frozen=True)
@@ -405,6 +418,11 @@ def rule_matches(rule: Rule, request: Request) -> bool:
     """True when the rule's capability and selector both cover the request."""
     if rule.capability != request.capability:
         return False
+
+    # Even a wildcard does not authorize an uninterpretable filesystem identity.
+    if request.capability.startswith("file.") or request.capability == "proc.spawn":
+        if _resource_path(request.resource) is None:
+            return False
 
     match = rule.match
     if match.get("any") is True:
@@ -482,6 +500,8 @@ def evaluate(
     """
     if enforcement not in ENFORCEMENT_KINDS:
         raise PolicyError(f"unknown enforcement kind {enforcement!r}")
+    # Request holds a caller-visible mapping; validate again at the decision boundary.
+    _validate_budgets(request.usage)
 
     def decide(effect: str, reason: str, rule_id: str | None) -> Decision:
         return Decision(
