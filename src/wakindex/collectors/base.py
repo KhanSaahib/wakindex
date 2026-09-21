@@ -27,6 +27,10 @@ class CollectorBudgetExceeded(RuntimeError):
     """The collection deadline passed. Raised inside a guard, recorded as a timeout unknown."""
 
 
+class CollectorReadLimitExceeded(RuntimeError):
+    """Metadata exceeds the byte cap; a truncated prefix is not a complete observation."""
+
+
 @dataclass(frozen=True)
 class Budget:
     """Limits the framework enforces, so no collector has to remember to check them."""
@@ -223,7 +227,10 @@ class CollectorContext:
         if not str(resolved).startswith("/proc/"):
             raise ValueError(f"collectors read only /proc metadata, not {resolved}")
         with resolved.open("rb") as handle:
-            return handle.read(MAX_PROC_READ_BYTES).decode("utf-8", errors="replace")
+            data = handle.read(MAX_PROC_READ_BYTES + 1)
+        if len(data) > MAX_PROC_READ_BYTES:
+            raise CollectorReadLimitExceeded("metadata read exceeded its byte cap")
+        return data.decode("utf-8", errors="replace")
 
     # -- result ---------------------------------------------------------------------------
 
@@ -276,6 +283,8 @@ def run_collectors(collectors: Iterable[Collector], context: CollectorContext) -
 
 def _classify(err: Exception) -> tuple[str, str]:
     """Map a collection failure onto a documented unknown code."""
+    if isinstance(err, CollectorReadLimitExceeded):
+        return "collector_bounded_out", str(err)
     if isinstance(err, CollectorBudgetExceeded):
         return "collector_timeout", str(err)
     if isinstance(err, PermissionError):
