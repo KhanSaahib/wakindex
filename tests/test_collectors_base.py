@@ -297,9 +297,12 @@ def test_read_proc_text_reads_process_metadata():
 
 
 def test_read_proc_text_is_size_bounded(monkeypatch):
+    from wakindex.collectors.base import CollectorReadLimitExceeded
+
     monkeypatch.setattr("wakindex.collectors.base.MAX_PROC_READ_BYTES", 16)
     context = make_context()
-    assert len(context.read_proc_text(Path("/proc/self/status"))) <= 16
+    with pytest.raises(CollectorReadLimitExceeded):
+        context.read_proc_text(Path("/proc/self/status"))
 
 
 # -- runner ----------------------------------------------------------------------------------

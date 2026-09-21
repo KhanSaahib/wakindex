@@ -8,6 +8,10 @@ All notable user-visible changes to wakindex are recorded here. The format follo
 
 ## [Unreleased]
 
+- Keep principal and mount access indeterminate after failed, incomplete or capped metadata
+  reads, including shared operator authority and writable mounts. Report oversized metadata
+  instead of silently accepting a truncated read.
+
 - Preserve additive access-evidence fields during decode, SQLite storage, and export, including
   nested records. Upgrade existing stores without dropping their evidence.
 

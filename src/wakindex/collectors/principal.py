@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from wakindex.collectors.base import CollectorContext
+from wakindex.collectors.base import CollectorContext, _classify
 from wakindex.graph import Evidence
 
 PROC = Path("/proc")
@@ -26,6 +26,7 @@ class PrincipalCollector:
         ("grants", "principal:uid:"),
         ("grants", "principal:gid:"),
         ("grants", "principal:capability:"),
+        ("can-delegate", "principal:uid:"),
     )
 
     def __init__(self, pid: int, operator_uid: int | None = None) -> None:
@@ -48,32 +49,25 @@ class PrincipalCollector:
     def _read_status(self, context: CollectorContext) -> dict[str, str] | None:
         """Parse /proc/<pid>/status, or record why it could not be read.
 
-        A total read failure means none of this collector's three declared scopes were seen, not
-        just uid. `guard` only covers the one scope it is given, so a failure here must also cover
-        gid and capability explicitly -- otherwise they read back as silently empty rather than
-        unknown, which is the failure mode this framework exists to prevent.
+        Failure covers every emitted relation, including shared operator authority.
         """
         status: dict[str, str] = {}
-        read_ok = False
-        with context.guard(
-            relation="grants",
-            object_prefix="principal:uid:",
-            detail=f"reading /proc/{self.pid}/status",
-        ):
+        try:
             text = context.read_proc_text(PROC / str(self.pid) / "status")
             for line in text.splitlines():
                 key, separator, value = line.partition(":")
                 if separator:
                     status[key.strip()] = value.strip()
-            read_ok = True
-        if not read_ok:
-            detail = f"reading /proc/{self.pid}/status failed; see the principal:uid: unknown"
-            for kind in ("gid", "capability"):
+            if not status:
+                raise ValueError("empty status")
+        except Exception as err:  # noqa: BLE001 - failed metadata covers every output scope
+            code, _ = _classify(err)
+            for relation, prefix in self.scopes:
                 context.unknown(
-                    relation="grants",
-                    object_prefix=f"principal:{kind}:",
-                    code="partial_enumeration",
-                    detail=detail,
+                    relation=relation,
+                    object_prefix=prefix,
+                    code=code,
+                    detail=f"reading /proc/{self.pid}/status failed",
                 )
             return None
         return status or None
@@ -88,17 +82,24 @@ class PrincipalCollector:
         field: str,
         kind: str,
     ) -> None:
-        raw = status.get(field)
-        if raw is None:
+        raw = status.get(field, "")
+        values = raw.split()
+        if len(values) != 4 or any(not value.isdecimal() for value in values):
             context.unknown(
                 relation="grants",
                 object_prefix=f"principal:{kind}:",
                 code="partial_enumeration",
-                detail=f"/proc/{self.pid}/status has no {field} line",
+                detail=f"/proc/{self.pid}/status has an incomplete {field} line",
             )
+            if kind == "uid":
+                context.unknown(
+                    relation="can-delegate",
+                    object_prefix="principal:uid:",
+                    code="partial_enumeration",
+                    detail="effective uid could not be determined",
+                )
             return
 
-        values = raw.split()
         for position, value in enumerate(values[: len(_ID_KINDS)]):
             context.emit(
                 collector=self.name,

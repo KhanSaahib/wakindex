@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from wakindex.collectors.base import CollectorContext
+from wakindex.collectors.base import CollectorContext, _classify
 from wakindex.graph import Evidence
 
 PROC = Path("/proc")
@@ -26,7 +26,7 @@ class MountCollector:
     """
 
     name = "mounts"
-    scopes = (("can-read", "resource:mount:"),)
+    scopes = (("can-read", "resource:mount:"), ("can-write", "resource:mount:"))
 
     def __init__(self, pid: int | str = "self") -> None:
         self.pid = pid
@@ -36,18 +36,32 @@ class MountCollector:
         if text is None:
             return
 
+        lines = text.splitlines()
+        visited = 0
         for line in context.bounded(
-            text.splitlines(),
+            lines,
             relation="can-read",
             object_prefix="resource:mount:",
             detail=f"mount table of pid {self.pid}",
         ):
-            with context.guard(
-                relation="can-read",
-                object_prefix="resource:mount:",
-                detail="parsing a mountinfo line",
-            ):
+            visited += 1
+            try:
                 self._record_mount(context, line)
+            except Exception as err:  # noqa: BLE001 - every failed line leaves both scopes unknown
+                code, _ = _classify(err)
+                self._unknown(context, code)
+        if visited < len(lines):
+            code = "collector_timeout" if context.deadline_passed else "collector_bounded_out"
+            self._unknown(context, code)
+
+    def _unknown(self, context: CollectorContext, code: str) -> None:
+        for relation, prefix in self.scopes:
+            context.unknown(
+                relation=relation,
+                object_prefix=prefix,
+                code=code,
+                detail=f"mount table of pid {self.pid} was not completely observed",
+            )
 
     def _read_mountinfo(self, context: CollectorContext) -> str | None:
         """Read the mount table, or record that the whole filesystem scope was not seen.
@@ -57,25 +71,15 @@ class MountCollector:
         """
         try:
             return context.read_proc_text(PROC / str(self.pid) / "mountinfo")
-        except PermissionError as err:
-            context.unknown(
-                relation="can-read",
-                object_prefix="resource:mount:",
-                code="collector_permission_denied",
-                detail=f"reading mountinfo of pid {self.pid}: {err.strerror or 'denied'}",
-            )
-        except OSError as err:
-            context.unknown(
-                relation="can-read",
-                object_prefix="resource:mount:",
-                code="partial_enumeration",
-                detail=f"reading mountinfo of pid {self.pid}: {type(err).__name__}",
-            )
+        except Exception as err:  # noqa: BLE001 - metadata failures must cover both relations
+            code, _ = _classify(err)
+            self._unknown(context, code)
         return None
 
     def _record_mount(self, context: CollectorContext, line: str) -> None:
         parsed = parse_mountinfo_line(line)
         if parsed is None:
+            self._unknown(context, "partial_enumeration")
             return
 
         mount_point = parsed["mount_point"]
@@ -116,7 +120,7 @@ def parse_mountinfo_line(line: str) -> dict[str, object] | None:
         return None
 
     separator = fields.index(_OPTIONAL_TERMINATOR)
-    if separator + 2 >= len(fields):
+    if separator < 6 or separator + 3 >= len(fields):
         return None
 
     options = fields[5].split(",")
