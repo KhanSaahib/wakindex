@@ -46,8 +46,15 @@ class PrincipalCollector:
     # -- reading ------------------------------------------------------------------------
 
     def _read_status(self, context: CollectorContext) -> dict[str, str] | None:
-        """Parse /proc/<pid>/status, or record why it could not be read."""
+        """Parse /proc/<pid>/status, or record why it could not be read.
+
+        A total read failure means none of this collector's three declared scopes were seen, not
+        just uid. `guard` only covers the one scope it is given, so a failure here must also cover
+        gid and capability explicitly -- otherwise they read back as silently empty rather than
+        unknown, which is the failure mode this framework exists to prevent.
+        """
         status: dict[str, str] = {}
+        read_ok = False
         with context.guard(
             relation="grants",
             object_prefix="principal:uid:",
@@ -58,6 +65,17 @@ class PrincipalCollector:
                 key, separator, value = line.partition(":")
                 if separator:
                     status[key.strip()] = value.strip()
+            read_ok = True
+        if not read_ok:
+            detail = f"reading /proc/{self.pid}/status failed; see the principal:uid: unknown"
+            for kind in ("gid", "capability"):
+                context.unknown(
+                    relation="grants",
+                    object_prefix=f"principal:{kind}:",
+                    code="partial_enumeration",
+                    detail=detail,
+                )
+            return None
         return status or None
 
     # -- recording ----------------------------------------------------------------------

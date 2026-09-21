@@ -211,8 +211,15 @@ class CollectorContext:
 
         Only paths under /proc are accepted. A collector that could read arbitrary files would be
         reading content it discovered, which is the behaviour the architecture forbids.
+
+        The check resolves the path first rather than testing the string as given: a lexical
+        check alone accepts a traversal segment such as `/proc/self/../../../../etc/passwd`
+        (which is still a string starting with `/proc/`) and would also follow a magic symlink
+        such as `/proc/<pid>/cwd` to whatever it points at outside /proc. No current caller
+        constructs a path like that, but the guarantee this function exists to provide should
+        hold structurally, not by accident of what callers happen to pass today.
         """
-        resolved = Path(path)
+        resolved = Path(path).resolve()
         if not str(resolved).startswith("/proc/"):
             raise ValueError(f"collectors read only /proc metadata, not {resolved}")
         with resolved.open("rb") as handle:
