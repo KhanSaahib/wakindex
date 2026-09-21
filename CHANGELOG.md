@@ -8,6 +8,9 @@ All notable user-visible changes to wakindex are recorded here. The format follo
 
 ## [Unreleased]
 
+- Reject capability policies with incompatible selector combinations and malformed budget
+  usage. Wildcard file rules no longer authorize invalid file identities. Strengthen seeded
+  policy fuzz checks with an independent matching oracle and complete sequence comparison.
 - Keep principal and mount access indeterminate after failed, incomplete or capped metadata
   reads, including shared operator authority and writable mounts. Report oversized metadata
   instead of silently accepting a truncated read.
