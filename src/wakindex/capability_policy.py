@@ -6,7 +6,9 @@ import hashlib
 import json
 import posixpath
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 SCHEMA_VERSION = "1.0"
@@ -111,13 +113,24 @@ def path_within(candidate: str, prefix: str) -> bool:
 
 @dataclass(frozen=True)
 class Rule:
-    """One policy rule. Frozen: an accepted revision is never edited in place."""
+    """One policy rule. Frozen: an accepted revision is never edited in place.
+
+    `frozen=True` only stops `rule.match = ...` from reassigning the attribute; it does nothing
+    to protect a mutable dict already bound to that attribute. `rule.match["path_prefix"] = "/"`
+    would otherwise succeed silently and change what this rule matches from underneath every
+    holder of this object, including one already sitting in a cache keyed by `revision_digest`.
+    `__post_init__` replaces whatever mapping was passed in with a read-only view over a private
+    copy, so no caller's own dict can alias it either.
+    """
 
     id: str
     effect: str
     capability: str
-    match: dict[str, Any]
+    match: Mapping[str, Any]
     reason_code: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "match", MappingProxyType(dict(self.match)))
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -131,9 +144,17 @@ class Rule:
 
 @dataclass(frozen=True)
 class Budgets:
-    """Resource limits carried by a revision. Absent limits are not enforced by this evaluator."""
+    """Resource limits carried by a revision. Absent limits are not enforced by this evaluator.
 
-    limits: dict[str, int]
+    Same mutability gap as `Rule.match`, same fix: `object.__setattr__` in `__post_init__` swaps
+    in a read-only view over a private copy so `revision.budgets.limits["pids"] = 0` cannot widen
+    a budget out from under an evaluator that already decided a revision's digest identifies it.
+    """
+
+    limits: Mapping[str, int]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "limits", MappingProxyType(dict(self.limits)))
 
     def as_dict(self) -> dict[str, int]:
         return dict(self.limits)
