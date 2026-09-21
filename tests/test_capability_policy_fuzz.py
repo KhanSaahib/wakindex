@@ -1,0 +1,263 @@
+"""Description: Seeded fuzzing that malformed capability policies fail closed, never open."""
+
+import copy
+import json
+import random
+
+import pytest
+
+from wakindex.capability_policy import (
+    PolicyError,
+    Request,
+    evaluate,
+    rule_matches,
+    validate_revision,
+)
+
+# A fixed seed, deliberately. An unseeded fuzzer that fails once and passes on rerun tells you
+# nothing you can act on, and a failure nobody can reproduce gets closed as flaky.
+SEED = 20260920
+ITERATIONS = 400
+
+VALID_DOCUMENT = {
+    "schema_version": "1.0",
+    "revision": 4,
+    "parent_revision": 3,
+    "created_at": "2026-09-20T17:38:00Z",
+    "created_by": "principal:uid:1000",
+    "rules": [
+        {
+            "id": "r-fs-project",
+            "effect": "allow",
+            "capability": "file.read",
+            "match": {"path_prefix": "/home/op/project"},
+            "reason_code": "ALLOW_RULE",
+        },
+        {
+            "id": "r-fs-secrets",
+            "effect": "deny",
+            "capability": "file.read",
+            "match": {"path_prefix": "/home/op/project/.env"},
+            "reason_code": "DENY_EXPLICIT_RULE",
+        },
+    ],
+    "budgets": {"pids": 256},
+}
+
+# Requests the fuzzer asks after each mutation. The third element is the pristine document's
+# answer, used only by the baseline guard below; mutations legitimately change those answers.
+PROBES = (
+    ("file.read", "resource:file:/home/op/project/README.md", True),
+    ("file.read", "resource:file:/home/op/project/.env", False),
+    ("file.read", "resource:file:/etc/shadow", False),
+    ("file.read", "resource:file:/home/op/project-secrets/key.pem", False),
+    ("file.write", "resource:file:/home/op/project/README.md", False),
+    ("net.connect", "resource:net:tcp/10.0.0.5:443", False),
+    ("tool.invoke", "resource:file:/home/op/project/README.md", False),
+)
+
+_JUNK = (
+    None,
+    True,
+    False,
+    0,
+    -1,
+    2**63,
+    "",
+    "allow",
+    "deny",
+    "*",
+    "/",
+    "../../etc",
+    {},
+    [],
+    {"any": True},
+    [{"id": "x"}],
+    "ALLOW_RULE",
+    "file.read",
+    1.5,
+)
+
+
+def _paths(document, prefix=()):
+    """Every addressable location in the document, so mutations reach nested rules too."""
+    if isinstance(document, dict):
+        for key, value in document.items():
+            yield prefix + (key,)
+            yield from _paths(value, prefix + (key,))
+    elif isinstance(document, list):
+        for index, value in enumerate(document):
+            yield prefix + (index,)
+            yield from _paths(value, prefix + (index,))
+
+
+def _at(document, path):
+    for step in path:
+        document = document[step]
+    return document
+
+
+def _mutate(rng, document):
+    """Apply one mutation: replace a value, delete a key, or add an unexpected key."""
+    mutated = copy.deepcopy(document)
+    paths = list(_paths(mutated))
+    path = rng.choice(paths)
+    action = rng.choice(("replace", "delete", "insert"))
+
+    parent = _at(mutated, path[:-1]) if len(path) > 1 else mutated
+    key = path[-1]
+
+    if action == "replace":
+        parent[key] = copy.deepcopy(rng.choice(_JUNK))
+    elif action == "delete":
+        if isinstance(parent, dict):
+            parent.pop(key, None)
+        elif isinstance(parent, list) and parent:
+            parent.pop(min(key, len(parent) - 1))
+    else:
+        target = _at(mutated, path)
+        if isinstance(target, dict):
+            target[f"injected_{rng.randrange(1000)}"] = rng.choice(_JUNK)
+        elif isinstance(parent, dict):
+            parent[f"injected_{rng.randrange(1000)}"] = rng.choice(_JUNK)
+
+    return mutated, action, path
+
+
+def test_the_pristine_document_behaves_as_the_probes_expect():
+    """Guards the fuzzer. If the baseline is wrong, every assertion below is measuring nothing."""
+    revision = validate_revision(VALID_DOCUMENT)
+    for capability, resource, expected_allow in PROBES:
+        decision = evaluate(revision, Request("s:fuzz", capability, resource))
+        assert decision.allowed is expected_allow, (capability, resource)
+
+
+def test_every_allow_under_mutation_is_grounded_in_a_rule_that_says_allow():
+    """Under arbitrary mutation, an allow must always be traceable to a rule that grants it.
+
+    An earlier version of this test asserted that no mutation may turn a denied request into an
+    allowed one. That property is false and the fuzzer was right to break it: deleting the deny
+    rule produces a different policy that genuinely allows more, and a validator cannot know the
+    operator did not mean it.
+
+    The invariant that does hold is grounding. Whatever a corrupted document parses into, an
+    allow must name a real rule in that document whose effect is allow and whose selector the
+    matcher independently agrees covers the request, and no deny rule may match at the same time.
+    An allow that appears from nowhere, or one that survives a matching deny, is a defect.
+    """
+    rng = random.Random(SEED)
+    rejected = 0
+    accepted = 0
+    failures = []
+
+    for iteration in range(ITERATIONS):
+        mutated, action, path = _mutate(rng, VALID_DOCUMENT)
+        try:
+            revision = validate_revision(mutated)
+        except PolicyError:
+            rejected += 1
+            continue
+        except Exception as err:  # noqa: BLE001 - an unexpected type is itself the finding
+            failures.append(f"iteration {iteration}: {type(err).__name__} from {action} at {path}")
+            continue
+
+        accepted += 1
+        by_id = {rule.id: rule for rule in revision.rules}
+
+        for capability, resource, _ in PROBES:
+            probe = Request("s:fuzz", capability, resource)
+            try:
+                decision = evaluate(revision, probe)
+            except PolicyError:
+                continue
+            except Exception as err:  # noqa: BLE001
+                failures.append(f"iteration {iteration}: evaluate raised {type(err).__name__}")
+                continue
+
+            if not decision.allowed:
+                continue
+
+            named = by_id.get(decision.matched_rule_id)
+            if named is None:
+                failures.append(f"iteration {iteration}: allow named a rule not in the document")
+                continue
+            if named.effect != "allow":
+                failures.append(f"iteration {iteration}: allow named a {named.effect} rule")
+            if named.capability != capability:
+                failures.append(f"iteration {iteration}: allow named a rule for another capability")
+            if not rule_matches(named, probe):
+                failures.append(f"iteration {iteration}: allow named a rule that does not match")
+            if any(
+                rule.effect == "deny" and rule_matches(rule, probe) for rule in revision.rules
+            ):
+                failures.append(f"iteration {iteration}: allow survived a matching deny rule")
+
+    assert not failures, "\n".join(failures[:10])
+    # A fuzzer that rejects everything, or accepts everything, is not exercising the validator.
+    assert rejected > 0 and accepted > 0, f"rejected={rejected} accepted={accepted}"
+
+
+def test_mutating_a_field_that_cannot_widen_access_does_not_change_decisions():
+    """Provenance fields carry no authority, so changing them must not move any outcome."""
+    baseline = validate_revision(VALID_DOCUMENT)
+    probes = [Request("s:fuzz", cap, res) for cap, res, _ in PROBES]
+    expected = [evaluate(baseline, probe).effect for probe in probes]
+
+    for field, value in (
+        ("created_by", "principal:uid:4242"),
+        ("created_at", "2027-01-01T00:00:00Z"),
+        ("revision", 99),
+        ("parent_revision", None),
+    ):
+        document = copy.deepcopy(VALID_DOCUMENT)
+        document[field] = value
+        revision = validate_revision(document)
+        assert [evaluate(revision, probe).effect for probe in probes] == expected, field
+
+
+def test_the_fuzz_run_is_reproducible():
+    """Two runs at the same seed must produce the same mutations, or a failure cannot be chased."""
+    first = [_mutate(random.Random(SEED), VALID_DOCUMENT)[1:] for _ in range(5)]
+    second = [_mutate(random.Random(SEED), VALID_DOCUMENT)[1:] for _ in range(5)]
+    assert first == second
+
+
+def test_a_mutation_never_crashes_the_validator_with_an_unexpected_type():
+    rng = random.Random(SEED + 1)
+    for _ in range(ITERATIONS):
+        mutated, _, _ = _mutate(rng, VALID_DOCUMENT)
+        try:
+            validate_revision(mutated)
+        except PolicyError:
+            pass
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        None,
+        [],
+        "policy",
+        0,
+        {"rules": "everything"},
+        {"schema_version": "1.0", "revision": 1, "rules": {}},
+    ],
+)
+def test_a_document_that_is_not_a_policy_is_rejected_cleanly(document):
+    with pytest.raises(PolicyError):
+        validate_revision(document)
+
+
+def test_a_deeply_nested_value_does_not_escape_validation():
+    document = copy.deepcopy(VALID_DOCUMENT)
+    document["rules"][0]["match"] = {"path_prefix": {"nested": ["/home/op/project"]}}
+    with pytest.raises(PolicyError):
+        validate_revision(document)
+
+
+def test_evaluation_of_a_valid_revision_is_reproducible_across_runs():
+    revision = validate_revision(VALID_DOCUMENT)
+    probe = Request("s:fuzz", "file.read", "resource:file:/home/op/project/.env")
+
+    results = {json.dumps(evaluate(revision, probe).as_dict(), sort_keys=True) for _ in range(20)}
+    assert len(results) == 1

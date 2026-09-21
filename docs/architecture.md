@@ -249,6 +249,50 @@ leak through a field added later still fails.
 None of these collectors installs or inspects an enforcement boundary, so every finding they
 produce carries enforcement status `unknown`.
 
+## Capability policy evaluation
+
+The runtime capability policy is a separate schema from the static `wakindex-policy.toml` and has
+its own parser, per decision D-09. Merging them would let a static configuration finding and a
+runtime authorization decision be expressed as the same record.
+
+Validation is strict and all-or-nothing. An unknown field anywhere in a policy document is an
+error rather than an ignored key: a misspelled selector narrows nothing and quietly widens the
+rule it was meant to restrict, and a misspelled `deny` is exactly the failure this component
+exists to prevent. One invalid rule rejects the whole revision, because a partially loaded policy
+is a gap that no operator can see -- the surviving rules look like the whole policy. A rule whose
+`reason_code` contradicts its `effect` is rejected too, since it would explain a decision it did
+not make.
+
+An accepted revision is frozen and content-addressed. `revision_digest` is the SHA-256 of the
+canonical JSON form, so two spellings of one policy digest identically and any change to a rule
+changes the digest. Validation deep-copies the caller's document; a revision that aliased it
+would be immutable in name only.
+
+Evaluation order is total, so two evaluators cannot disagree:
+
+1. An exceeded budget denies with `DENY_BUDGET_EXCEEDED`.
+2. Any matching `deny` rule denies. No `allow`, however specific, overrides it.
+3. A matching `allow` rule allows.
+4. Nothing matched: `DENY_DEFAULT`. Absence is never permission.
+
+Specificity decides only which rule the decision *names*, never the outcome, and the naming order
+is total -- exact match, then longest canonical prefix, then rule id -- so reordering a document
+cannot change which rule is reported. `explain()` returns every matching rule alongside the named
+one, because an operator who removes the named rule and sees no change needs to know why.
+
+Path matching is segment-wise against canonical paths, not string prefixes. A string prefix test
+would report `/home/op/project-secrets` as inside `/home/op/project`, granting a sibling
+directory because its name starts with an allowed one. Traversal, duplicate separators and
+relative segments normalize first, and `..` above root clamps to root exactly as the kernel
+resolves it, so the evaluator and the kernel agree on which file a path names. A resource that
+cannot be canonicalized is denied rather than matched loosely.
+
+Budgets are compared only against usage the caller supplies. The evaluator reads no clock and no
+counter, which is what makes a decision reproducible from the revision and the request alone.
+
+There is no model inference anywhere in the authorization path, and a test over the module
+enforces that rather than leaving it to convention.
+
 ## Permission taxonomy
 
 Current permission IDs:
