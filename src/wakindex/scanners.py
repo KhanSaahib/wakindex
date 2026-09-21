@@ -221,13 +221,20 @@ def _scan_mcp(
         command = config.get("command")
         args = config.get("args", [])
         if isinstance(command, str):
+            # An argument-free label, not the raw command: a `command` field is conventionally
+            # just the executable, but nothing stops a misconfigured entry from putting a literal
+            # secret after it, and the raw string would then flow verbatim into evidence and,
+            # through ToolCollector, into this finding's access-graph object id. Hooks already
+            # use this same truncation for the same reason; MCP `command` should not be the one
+            # path left echoing whatever text was written there.
+            executable = _command_executable(command)
             yield _finding(
                 "process.execute",
                 name,
                 source,
-                f"command: {command}",
+                f"command: {executable}",
                 "medium",
-                command=command,
+                command=executable,
                 **metadata,
             )
             command_line = " ".join([command, *[str(arg) for arg in args if isinstance(arg, str)]])
