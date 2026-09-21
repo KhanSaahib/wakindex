@@ -89,6 +89,39 @@ def test_a_discovered_command_is_recorded_as_text_and_not_run(tmp_path):
     assert objects(snapshot, "tool_server:mcp:") == {"tool_server:mcp:hostile"}
 
 
+def test_a_command_field_with_trailing_text_is_recorded_as_just_the_executable(tmp_path):
+    """The `command` field is conventionally just an executable; args belong in `args`.
+
+    Regression: literal text placed after the executable in `command` -- a config-authoring
+    mistake, or a hostile config -- used to flow verbatim into both this finding's evidence and
+    its resource:file: object id. Hooks already truncate to an argument-free label for exactly
+    this reason (`_command_executable`); MCP `command` did not. The planted value here does not
+    match any known credential shape on purpose: the point is not depending on pattern
+    recognition to catch this, the same way hooks do not.
+    """
+    config = tmp_path / "mcp.json"
+    config.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "leaky": {
+                        "command": "/opt/tool --bearer zzcustom-9f3a7c21-opaque-internal-cred",
+                    }
+                }
+            }
+        )
+    )
+
+    snapshot = collect([config], tmp_path)
+
+    for finding in snapshot.findings:
+        assert "zzcustom-9f3a7c21-opaque-internal-cred" not in finding.evidence[0].detail
+        assert "zzcustom-9f3a7c21-opaque-internal-cred" not in finding.object
+
+    executables = {f.object for f in snapshot.findings if f.relation == "can-execute"}
+    assert executables == {"resource:file:/opt/tool"}
+
+
 # -- failure paths ---------------------------------------------------------------------------------
 
 
